@@ -23,11 +23,11 @@
 #include <fstream>
 #include <sys/stat.h>
 
-Process::Process(pid_t pid) : mPid(pid), mDead(false)
+Process::Process(pid_t pid, std::string::size_type maxStoredStringLength) : mPid(pid), mDead(false)
 {
     // Get and cache details about the process
-    mName = getName();
-    mCmdline = getCmdline();
+    mName = getName(maxStoredStringLength);
+    mCmdline = getCmdline(maxStoredStringLength);
     mPpid = getParentPid();
 
     mContainer = getContainer();
@@ -203,7 +203,7 @@ pid_t Process::getParentPid() const
  *
  * @return Process name (empty string if failed to get name - e.g. if process was very short-lived and died)
  */
-std::string Process::getName() const
+std::string Process::getName(std::string::size_type maxLength) const
 {
     char procPath[PATH_MAX];
     sprintf(procPath, "/proc/%u/cmdline", mPid);
@@ -215,10 +215,10 @@ std::string Process::getName() const
     }
 
     std::string name;
-    name.assign((std::istreambuf_iterator<char>(cmdFile)),
-                (std::istreambuf_iterator<char>()));
-
-    name.erase(std::find(name.begin(), name.end(), '\0'), name.end());
+    char character;
+    while (name.size() < maxLength && cmdFile.get(character) && character != '\0') {
+        name.push_back(character);
+    }
 
     return name;
 }
@@ -228,7 +228,7 @@ std::string Process::getName() const
  *
  * @return Process cmdline (empty string if failed - e.g. if process was very short-lived and died)
  */
-std::string Process::getCmdline() const
+std::string Process::getCmdline(std::string::size_type maxLength) const
 {
     char procPath[PATH_MAX];
     sprintf(procPath, "/proc/%u/cmdline", mPid);
@@ -240,8 +240,14 @@ std::string Process::getCmdline() const
     }
 
     std::string cmdline;
-    cmdline.assign((std::istreambuf_iterator<char>(cmdFile)),
-                   (std::istreambuf_iterator<char>()));
+    if (maxLength == std::string::npos) {
+        cmdline.assign((std::istreambuf_iterator<char>(cmdFile)),
+                       (std::istreambuf_iterator<char>()));
+    } else {
+        cmdline.resize(maxLength);
+        cmdFile.read(cmdline.data(), static_cast<std::streamsize>(cmdline.size()));
+        cmdline.resize(static_cast<std::string::size_type>(cmdFile.gcount()));
+    }
 
     if (cmdline.empty()) {
         return cmdline;
@@ -347,20 +353,22 @@ std::string Process::GetCgroupPathByCgroupControllerAndPid(const std::string &cg
 
     std::string cgrp_path;
 
+    // Match pattern: "<hierarchy_id>:<controller>:/<path>"
+    // e.g. "3:cpuset:/com.sky.as.apps_com.bskyb.epgui"
+    std::string needle = ":" + cgroup_controller + ":/";
+
     std::ifstream cgrp_strm(cgroupFilePath);
     if (cgrp_strm) {
         std::string cgrp_line;
-        int hierarchy_id;
-        char cgroup_path[128];
 
-        std::string sscanf_format = std::string("%d:") + cgroup_controller + ":/%s";
-
-        // Doesn't feel very efficient (need to memset cgroup_path each time round the loop) but the alternatives are std::string.find (clunky) or std::regex (inefficient).
-        // Besides, the gpu group always appears to be the first line.
         while (std::getline(cgrp_strm, cgrp_line)) {
-            memset(cgroup_path, 0, sizeof(cgroup_path));
-            if (sscanf(cgrp_line.c_str(), sscanf_format.c_str(), &hierarchy_id, cgroup_path) == 2) {
-                cgrp_path = cgroup_path;
+            auto pos = cgrp_line.find(needle);
+	    if (pos != std::string::npos) {
+                // Extract everything after ":<controller>:/"
+                size_t pathStart = pos + needle.size();
+                if (pathStart < cgrp_line.size()) {
+                    cgrp_path = cgrp_line.substr(pathStart);
+                }
                 break;
             }
         }

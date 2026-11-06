@@ -150,11 +150,11 @@
                 <tr>
                     <td>{{ p.pid }}</td>
                     <td>{{ p.ppid }}</td>
-                    <td style="word-wrap: break-word; min-width: 500px;">{{ p.name }}</td>
-                    <td>{{ p.group }}</td>
-                    <td>{{ p.systemdService }}</td>
-                    <td>{{ p.container }}</td>
-                    <td style="word-wrap: break-word; min-width: 500px;">{{ p.cmdline }}</td>
+                    <td style="word-wrap: break-word; min-width: 500px;">{{ htmlEscape(p.name) }}</td>
+                    <td>{{ htmlEscape(p.group) }}</td>
+                    <td>{{ htmlEscape(p.systemdService) }}</td>
+                    <td>{{ htmlEscape(p.container) }}</td>
+                    <td style="word-wrap: break-word; min-width: 500px;">{{ htmlEscape(p.cmdline) }}</td>
                     <td>{{ p.rss.min }}</td>
                     <td>{{ p.rss.max }}</td>
                     <td>{{ p.rss.average }}</td>
@@ -208,7 +208,7 @@
                     <thead>
                     <tr>
                         {% for item in dataset._columnOrder %}
-                        <th>{{ item }}</th>
+			<th>{{ htmlEscape(item) }}</th>
                         {% endfor %}
                     </tr>
                     </thead>
@@ -216,7 +216,7 @@
                     {% for row in dataset.data %}
                     <tr>
                         {% for item in objectToArray(row, dataset._columnOrder) %}
-                        <td>{{ item }}</td>
+			<th>{{ htmlEscape(item) }}</th>
                         {% endfor %}
                     </tr>
                     {% endfor %}
@@ -440,7 +440,7 @@
         data: {
             labels: [
                 {% for i in range(20) %}
-                    '{{ at(processes, i).name }}',
+                    '{{ jsEscape(at(processes, i).name) }}',
                 {% endfor %}
              ],
             datasets: [{
@@ -470,7 +470,7 @@
             data: {
                 labels: [
                     {% for g in pssByGroup %}
-                        '{{ g.groupName }}',
+                        '{{ jsEscape(g.groupName) }}',
                     {% endfor %}
                  ],
                 datasets: [{

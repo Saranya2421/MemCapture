@@ -36,7 +36,7 @@
 class Process
 {
 public:
-    explicit Process(pid_t pid);
+    explicit Process(pid_t pid, std::string::size_type maxStoredStringLength = std::string::npos);
 
     bool operator==(const Process &rhs) const
     {
@@ -65,9 +65,9 @@ public:
 private:
     pid_t getParentPid() const;
 
-    std::string getName() const;
+    std::string getName(std::string::size_type maxLength) const;
 
-    std::string getCmdline() const;
+    std::string getCmdline(std::string::size_type maxLength) const;
 
     std::string getSystemdService();
 

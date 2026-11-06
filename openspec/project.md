@@ -19,7 +19,7 @@ It focuses on runtime behavior and subsystem responsibilities of the single runt
 - The repository builds a single executable target named `MemCapture` via CMake `add_executable(${PROJECT_NAME} ...)` where `project(MemCapture)` defines `PROJECT_NAME` (`CMakeLists.txt:19`, `CMakeLists.txt:35`).
 - The binary captures memory telemetry and emits reports, described in repository docs as a memory capture/analysis tool for RDK (`README.md:1`, `README.md:3`).
 - Runtime output includes `report.html` always and optional `report.json` when `-j` is provided (`main.cpp:327`, `main.cpp:332`, `main.cpp:344`).
-- Build dependencies are `nlohmann_json` and `inja`; `incbin` is bundled in-tree (`CMakeLists.txt:32`, `CMakeLists.txt:33`, `main.cpp:52`, `README.md:14`).
+- Build dependencies are `nlohmann_json`, `inja`, and `re2`; `incbin` is bundled in-tree (`CMakeLists.txt`, `main.cpp`, `README.md`).
 
 ### Inferences - System Purpose
 

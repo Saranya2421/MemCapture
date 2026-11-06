@@ -35,6 +35,7 @@ add_compile_options(-Wall -Wextra -Wno-psabi)
 # GOOD: Use find_package with CONFIG for vcpkg packages
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(inja CONFIG REQUIRED)
+find_package(re2 CONFIG REQUIRED)
 
 # GOOD: Optional dependency with graceful fallback
 find_package(Breakpad QUIET)
@@ -91,6 +92,7 @@ target_link_libraries(${PROJECT_NAME}
     Threads::Threads
     nlohmann_json::nlohmann_json
     pantor::inja
+    re2::re2
 )
 
 # Always find Threads before linking
@@ -107,7 +109,8 @@ Keep `vcpkg.json` minimal — only declare direct dependencies:
   "version-string": "2.0.1",
   "dependencies": [
     "nlohmann-json",
-    "inja"
+    "inja",
+    "re2"
   ]
 }
 ```
@@ -127,7 +130,7 @@ cmake --build . --parallel $(nproc)
 ```
 
 ### Yocto / Cross-Compilation Build
-- Add `nlohmann-json` and `inja` as recipe dependencies in the Yocto layer
+- Add `nlohmann-json`, `inja`, and `re2` as recipe dependencies in the Yocto layer
 - Do NOT use the vcpkg toolchain file for Yocto builds
 - Use the Yocto SDK sysroot; CMake will find packages via `PKG_CONFIG_PATH`
 
@@ -155,7 +158,7 @@ find_package_handle_standard_args(Breakpad DEFAULT_MSG
 | Platform | Build method | Notes |
 |----------|-------------|-------|
 | Linux desktop | CMake + vcpkg | Full feature set |
-| RDK-E / RDK-V devices (Amlogic, Realtek, Broadcom, Mediatek, etc.) | Yocto recipe | No vcpkg; `nlohmann_json` + `inja` from sysroot |
+| RDK-E / RDK-V devices (Amlogic, Realtek, Broadcom, Mediatek, etc.) | Yocto recipe | No vcpkg; `nlohmann_json` + `inja` + `re2` from sysroot |
 | RDK-E / RDK-V with Breakpad | Yocto recipe + Breakpad lib | Set `USE_BREAKPAD` define |
 
 ```makefile

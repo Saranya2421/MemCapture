@@ -468,6 +468,15 @@ void MemoryMetric::GetCmaMemoryUsage()
 void MemoryMetric::GetGpuMemoryUsage()
 {
     if (mGPUMemorySupported) {
+        for (auto measurement = mGpuMeasurements.begin(); measurement != mGpuMeasurements.end();) {
+            measurement->second.ProcessInfo.updateAliveStatus();
+            if (measurement->first <= 0 || measurement->second.ProcessInfo.isDead()) {
+                measurement = mGpuMeasurements.erase(measurement);
+            } else {
+                ++measurement;
+            }
+        }
+
         //LOG_INFO("Getting GPU memory usage");
 
         switch (mPlatform) {
@@ -494,6 +503,32 @@ void MemoryMetric::GetGpuMemoryUsage()
             }			
         }
     }
+}
+
+void MemoryMetric::recordGpuMeasurement(pid_t pid, long double memoryUsedKb)
+{
+    if (pid <= 0) {
+        return;
+    }
+
+    auto measurement = mGpuMeasurements.find(pid);
+    if (measurement != mGpuMeasurements.end()) {
+        measurement->second.Used.AddDataPoint(memoryUsedKb);
+        return;
+    }
+
+    if (mGpuMeasurements.size() >= maxGpuMeasurements) {
+        if (!mGpuMeasurementLimitWarningLogged) {
+            LOG_WARN("GPU process measurement limit reached; additional processes will be omitted");
+            mGpuMeasurementLimitWarningLogged = true;
+        }
+        return;
+    }
+
+    Process process(pid, maxGpuProcessStringLength);
+    Measurement used("Memory_Usage_KB");
+    used.AddDataPoint(memoryUsedKb);
+    mGpuMeasurements.emplace(pid, gpuMeasurement(std::move(process), std::move(used)));
 }
 
 void MemoryMetric::GetContainerMemoryUsage()
@@ -871,21 +906,8 @@ void MemoryMetric::GetGpuMemoryUsageBroadcom()
 
                     // Convert TID to parent PID (TGID) to make things easier to correlate later on
                     pid_t pid = tidToParentPid(tid);
+		    recordGpuMeasurement(pid, virtualMemNumBytes / (long double) 1024.0);
 
-                    auto itr = mGpuMeasurements.find(pid);
-
-                    if (itr != mGpuMeasurements.end()) {
-                        // Already got a measurement for this PID
-                        auto &measurement = itr->second;
-                        measurement.Used.AddDataPoint(virtualMemNumBytes / (long double) 1024.0);
-                    } else {
-                        Process process(pid);
-                        Measurement used("Memory_Usage_KB");
-                        used.AddDataPoint(virtualMemNumBytes / (long double) 1024.0);
-
-                        auto measurement = gpuMeasurement(process, used);
-                        mGpuMeasurements.insert(std::make_pair(pid, measurement));
-                    }
                 }
             }
         }
@@ -922,22 +944,7 @@ void MemoryMetric::GetGpuMemoryUsageAmlogic()
     while (std::getline(gpuMem, line)) {
         if (sscanf(line.c_str(), "%*x %d %ld", &pid, &gpuPages) != 0) {
             unsigned long gpuBytes = gpuPages * mPageSize;
-
-            auto itr = mGpuMeasurements.find(pid);
-
-            if (itr != mGpuMeasurements.end()) {
-                // Already got a measurement for this PID
-                auto &measurement = itr->second;
-                measurement.Used.AddDataPoint(gpuBytes / (long double) 1024.0);
-            } else {
-                Process process(pid);
-
-                Measurement used("Memory_Usage_KB");
-                used.AddDataPoint(gpuBytes / (long double) 1024.0);
-
-                auto measurement = gpuMeasurement(process, used);
-                mGpuMeasurements.insert(std::make_pair(pid, measurement));
-            }
+            recordGpuMeasurement(pid, gpuBytes / (long double) 1024.0);
         }
     }
 }
@@ -972,16 +979,7 @@ void MemoryMetric::GetGpuMemoryUsageMediatek()
         // Format: "  kctx-0x000000009c7f034f (8338)       1224      11876"
         // %*s skips the hex pointer token; values are already in KB
         if (sscanf(line.c_str(), "  kctx-%*s (%d) %ld %ld", &pid, &currentKb, &peakKb) == 3) {
-            auto itr = mGpuMeasurements.find(pid);
-            if (itr != mGpuMeasurements.end()) {
-                itr->second.Used.AddDataPoint(currentKb);
-            } else {
-                Process process(pid);
-                Measurement used("Memory_Usage_KB");
-                used.AddDataPoint(currentKb);
-                auto measurement = gpuMeasurement(process, used);
-                mGpuMeasurements.insert(std::make_pair(pid, measurement));
-            }
+            recordGpuMeasurement(pid, currentKb);
         }
     }
 }
@@ -1017,22 +1015,7 @@ void MemoryMetric::GetGpuMemoryUsageRealtek()
     while (std::getline(gpuMem, line)) {
         if (sscanf(line.c_str(), "  kctx-0x%*x %ld %d", &gpuPages, &pid) != 0) {
             unsigned long gpuBytes = gpuPages * mPageSize;
-
-            auto itr = mGpuMeasurements.find(pid);
-
-            if (itr != mGpuMeasurements.end()) {
-                // Already got a measurement for this PID
-                auto &measurement = itr->second;
-                measurement.Used.AddDataPoint(gpuBytes / (long double) 1024.0);
-            } else {
-                Process process(pid);
-
-                Measurement used("Memory Usage KB");
-                used.AddDataPoint(gpuBytes / (long double) 1024.0);
-
-                auto measurement = gpuMeasurement(process, used);
-                mGpuMeasurements.insert(std::make_pair(pid, measurement));
-            }
+            recordGpuMeasurement(pid, gpuBytes / (long double) 1024.0);
         }
     }
 }

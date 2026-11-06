@@ -194,7 +194,7 @@ void ProcessMetric::DeduplicateData()
             d.pop_back();
 
             // Remove other duplicates from measurements
-            LOG_INFO("Removing %zu duplicates for %s", d.size(), duplicate.first.c_str());
+	    LOG_INFO("Removing %zu duplicate process records", d.size());
 
             for (const auto &toRemove: d) {
                 mMeasurements.erase(

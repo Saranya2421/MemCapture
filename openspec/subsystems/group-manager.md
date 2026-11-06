@@ -18,8 +18,9 @@
 
 ### Facts - Matching
 
-- `GroupManager` compiles each configured pattern into `std::regex` and stores as `Group` entries (`GroupManager.cpp:42`, `GroupManager.cpp:75`).
-- Matching uses regex search (`Group.h`).
+- `GroupManager` compiles configured patterns into RE2 expressions and stores them as `Group` entries (`GroupManager.cpp`).
+- Matching uses RE2 partial matching on at most the first 4096 bytes of the input (`Group.h`).
+- Pattern configuration is bounded to 128 patterns total, 64 patterns per group, 128 bytes per pattern, and 128 groups per type (`GroupManager.cpp`).
 - Process-level group resolution order in `Process::group`:
   1. container match
   2. process basename

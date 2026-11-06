@@ -19,9 +19,48 @@
 
 #include "GroupManager.h"
 #include "Log.h"
+#include <stdexcept>
+
+namespace {
+constexpr size_t maxGroupsPerType = 128;
+constexpr size_t maxPatternsPerGroup = 64;
+constexpr size_t maxTotalPatterns = 128;
+constexpr size_t maxPatternLength = 128;
+
+std::vector<std::shared_ptr<const re2::RE2>> compilePatterns(const nlohmann::json &patterns,
+                                                            size_t &totalPatternCount)
+{
+    if (!patterns.is_array() || patterns.size() > maxPatternsPerGroup) {
+        throw std::invalid_argument("invalid number of group patterns");
+    }
+
+    std::vector<std::shared_ptr<const re2::RE2>> compiledPatterns;
+    compiledPatterns.reserve(patterns.size());
+    for (const auto &patternJson : patterns) {
+        if (!patternJson.is_string() || totalPatternCount >= maxTotalPatterns) {
+            throw std::invalid_argument("invalid group pattern configuration");
+        }
+
+        const std::string pattern = patternJson.get<std::string>();
+        if (pattern.size() > maxPatternLength) {
+            throw std::invalid_argument("group pattern exceeds size limit");
+        }
+
+        auto compiledPattern = std::make_shared<re2::RE2>(pattern);
+        if (!compiledPattern->ok()) {
+            throw std::invalid_argument("invalid or unsupported group pattern");
+        }
+        compiledPatterns.emplace_back(std::move(compiledPattern));
+        ++totalPatternCount;
+    }
+    return compiledPatterns;
+}
+}
 
 GroupManager::GroupManager(nlohmann::json groupList) : mProcessGroups(), mContainerGroups()
 {
+    size_t totalPatternCount = 0;
+
     // Attempt to parse group JSON
 
     // Get process groups
@@ -29,6 +68,9 @@ GroupManager::GroupManager(nlohmann::json groupList) : mProcessGroups(), mContai
     if (!processGroups.is_array()) {
         LOG_ERROR("Process groups not a valid array - cannot map processes to groups");
     } else {
+        if (processGroups.size() > maxGroupsPerType) {
+            throw std::invalid_argument("too many process groups");
+        }
         for (const auto &group: processGroups) {
             if (!group.contains("group")) {
                 LOG_WARN("Found malformed process group - missing 'group' field");
@@ -40,14 +82,7 @@ GroupManager::GroupManager(nlohmann::json groupList) : mProcessGroups(), mContai
                 LOG_WARN("Malformed group %s - no 'processes' array", groupName.c_str());
                 continue;
             }
-            std::vector<std::string> processList = group["processes"];
-
-            // Got valid group info, parse process names into regexes and add to list
-            std::vector<std::regex> processRegexes{};
-            std::for_each(processList.begin(), processList.end(), [&](const std::string &name)
-            {
-                processRegexes.emplace_back(name);
-            });
+            auto processRegexes = compilePatterns(group["processes"], totalPatternCount);
 
             Group processGroup(groupName, processRegexes);
             mProcessGroups.emplace_back(processGroup);
@@ -62,6 +97,9 @@ GroupManager::GroupManager(nlohmann::json groupList) : mProcessGroups(), mContai
         LOG_ERROR("Container groups not a valid array - cannot map containers to groups");
         return;
     } else {
+        if (containerGroups.size() > maxGroupsPerType) {
+            throw std::invalid_argument("too many container groups");
+        }
         for (const auto &group: containerGroups) {
             if (!group.contains("group")) {
                 LOG_WARN("Found malformed container group - missing 'group' field");
@@ -73,13 +111,7 @@ GroupManager::GroupManager(nlohmann::json groupList) : mProcessGroups(), mContai
                 LOG_WARN("Malformed group %s - no 'containers' array", groupName.c_str());
                 continue;
             }
-            std::vector<std::string> containerList = group["containers"];
-
-            std::vector<std::regex> containerRegexes{};
-            std::for_each(containerList.begin(), containerList.end(), [&](const std::string &name)
-            {
-                containerRegexes.emplace_back(name);
-            });
+            auto containerRegexes = compilePatterns(group["containers"], totalPatternCount);
 
             Group containerGroup(groupName, containerRegexes);
             mContainerGroups.emplace_back(containerGroup);

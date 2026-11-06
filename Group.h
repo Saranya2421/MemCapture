@@ -19,8 +19,10 @@
 
 #pragma once
 
-#include <string_view>
-#include <regex>
+#include <algorithm>
+#include <memory>
+#include <re2/re2.h>
+#include <string>
 #include <vector>
 
 /**
@@ -32,8 +34,8 @@
 class Group
 {
 public:
-    Group(std::string groupName, std::vector<std::regex> toMatch) : mGroupName(std::move(groupName)),
-                                                                    mToMatch(std::move(toMatch))
+    Group(std::string groupName, std::vector<std::shared_ptr<const re2::RE2>> toMatch)
+        : mGroupName(std::move(groupName)), mToMatch(std::move(toMatch))
     {
     }
 
@@ -53,14 +55,16 @@ public:
      */
     bool isMatch(const std::string &name) const
     {
-        return std::any_of(mToMatch.begin(), mToMatch.end(), [&](const std::regex &toMatch)
+        constexpr size_t maxSubjectLength = 4096;
+        const std::string boundedName = name.substr(0, maxSubjectLength);
+        return std::any_of(mToMatch.begin(), mToMatch.end(), [&](const auto &toMatch)
         {
-            return std::regex_search(name, toMatch);
+            return re2::RE2::PartialMatch(boundedName, *toMatch);
         });
     }
 
 
 private:
     const std::string mGroupName;
-    const std::vector<std::regex> mToMatch;
+    const std::vector<std::shared_ptr<const re2::RE2>> mToMatch;
 };

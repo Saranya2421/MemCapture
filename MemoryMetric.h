@@ -74,6 +74,8 @@ private:
 
     void GetGpuMemoryUsageRealtek();
 
+    void recordGpuMeasurement(pid_t pid, long double memoryUsedKb);
+
     pid_t tidToParentPid(pid_t tid);
 
 private:
@@ -129,6 +131,9 @@ private:
     std::map<std::string, cmaMeasurement> mCmaMeasurements;
     std::map<std::string, Measurement> mLinuxMemoryMeasurements;
     std::map<pid_t, gpuMeasurement> mGpuMeasurements;
+    static constexpr size_t maxGpuMeasurements = 256;
+    static constexpr std::string::size_type maxGpuProcessStringLength = 4096;
+    bool mGpuMeasurementLimitWarningLogged = false;
     struct containerMeasurement
     {
         containerMeasurement(Measurement &_memoryUsed, uint64_t _cpuUsage, uint64_t _cpuUsageUser,

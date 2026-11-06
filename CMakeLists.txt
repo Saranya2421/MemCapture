@@ -31,6 +31,7 @@ find_package(Breakpad QUIET)
 
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(inja CONFIG REQUIRED)
+find_package(re2 CONFIG REQUIRED)
 
 add_executable(${PROJECT_NAME}
         main.cpp
@@ -67,6 +68,7 @@ target_link_libraries(${PROJECT_NAME}
         Threads::Threads
         nlohmann_json::nlohmann_json
         pantor::inja
+        re2::re2
 )
 
 if (BREAKPAD_FOUND)
@@ -83,4 +85,9 @@ endif ()
 option(ENABLE_CPU_IDLE_METRICS "Enable support for kernel-based AV metrics on supported platforms" OFF)
 if (ENABLE_CPU_IDLE_METRICS)
     add_definitions(-DENABLE_CPU_IDLE_METRICS=1)
+endif ()
+
+option(BUILD_TESTS "Build security regression tests" OFF)
+if (BUILD_TESTS)
+	add_subdirectory(tests)
 endif ()

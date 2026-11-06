@@ -19,13 +19,18 @@
 
 #include <unistd.h>
 #include <getopt.h>
+#include <fcntl.h>
 #include <csignal>
 #include <fstream>
 #include <optional>
 #include <filesystem>
+#include <fcntl.h>
+#include <stdexcept>
+#include <sys/stat.h>
 
 #include "Platform.h"
 #include "Log.h"
+#include "SafeFileOps.h"
 #include "ProcessMetric.h"
 #include "MemoryMetric.h"
 #include "Metadata.h"
@@ -62,6 +67,60 @@ static bool gCpuIdle = false;
 
 bool gEnableGroups = false;
 static std::filesystem::path gGroupsFile;
+
+class ScopedFileDescriptor
+{
+public:
+    explicit ScopedFileDescriptor(const int fd) : fd_(fd) {}
+    ~ScopedFileDescriptor() { if (fd_ >= 0) close(fd_); }
+    int get() const { return fd_; }
+
+    ScopedFileDescriptor(const ScopedFileDescriptor &) = delete;
+    ScopedFileDescriptor &operator=(const ScopedFileDescriptor &) = delete;
+
+private:
+    int fd_;
+};
+
+static nlohmann::json readGroupsFile(const std::filesystem::path &path)
+{
+    constexpr size_t maxGroupsFileSize = 1024 * 1024;
+    const bool runningAsRoot = geteuid() == 0;
+    if (runningAsRoot && path.lexically_normal() != std::filesystem::path("/etc/groups.json")) {
+        throw std::runtime_error("groups file path is not allowed for privileged execution");
+    }
+
+    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    if (fd < 0) {
+        throw std::runtime_error("unable to open groups file");
+    }
+    const ScopedFileDescriptor file(fd);
+
+    struct stat fileInfo {};
+    if (fstat(file.get(), &fileInfo) != 0 || !S_ISREG(fileInfo.st_mode) ||
+        (runningAsRoot && (fileInfo.st_uid != 0 || (fileInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0))) {
+        throw std::runtime_error("groups file is not a trusted regular file");
+    }
+
+    std::string contents;
+    char buffer[4096];
+    while (true) {
+        const ssize_t bytesRead = read(file.get(), buffer, sizeof(buffer));
+        if (bytesRead < 0) {
+            throw std::runtime_error("unable to read groups file");
+        }
+        if (bytesRead == 0) {
+            break;
+        }
+        const size_t count = static_cast<size_t>(bytesRead);
+        if (count > maxGroupsFileSize - contents.size()) {
+            throw std::runtime_error("groups file exceeds size limit");
+        }
+        contents.append(buffer, count);
+    }
+
+    return nlohmann::json::parse(contents);
+}
 
 ConditionVariable gStop;
 std::mutex gLock;
@@ -198,11 +257,12 @@ int main(int argc, char *argv[])
         LOG_WARN("Failed to set nice value");
     }
 
-    try {
-        std::filesystem::create_directories(gOutputDirectory);
-    } catch (std::filesystem::filesystem_error &e) {
-        LOG_ERROR("Failed to create directory %s to save results in: '%s'", gOutputDirectory.string().c_str(),
-                  e.what());
+    // Validate the output directory path before any filesystem operations
+    if (!validateOutputDirectory(gOutputDirectory)) {
+        return EXIT_FAILURE;
+    }
+
+    if (!createOutputDirectorySafe(gOutputDirectory)) {
         return EXIT_FAILURE;
     }
 
@@ -212,19 +272,12 @@ int main(int argc, char *argv[])
     // Load groups JSON if provided
     std::optional<std::shared_ptr<GroupManager>> groupManager = std::nullopt;
     if (gEnableGroups) {
-        LOG_INFO("Loading groups from %s", std::filesystem::absolute(gGroupsFile).string().c_str());
-        std::ifstream groupsFile(gGroupsFile);
-        if (!groupsFile) {
-            LOG_ERROR("Invalid groups file %s", gGroupsFile.string().c_str());
+        try {
+            auto groupsJson = readGroupsFile(gGroupsFile);
+            groupManager = std::make_shared<GroupManager>(groupsJson);
+        } catch (const std::exception &) {
+            LOG_ERROR("Failed to load groups file; verify its path, permissions, JSON, and group patterns");
             return EXIT_FAILURE;
-        } else {
-            try {
-                auto groupsJson = nlohmann::json::parse(groupsFile);
-                groupManager = std::make_shared<GroupManager>(groupsJson);
-            } catch (nlohmann::json::exception &e) {
-                LOG_ERROR("Failed to parse groups JSON with error %s", e.what());
-                return EXIT_FAILURE;
-            }
         }
     }
 
@@ -288,6 +341,27 @@ int main(int argc, char *argv[])
     env.set_trim_blocks(true);
     env.set_lstrip_blocks(true);
 
+    env.add_callback("htmlEscape", 1, [](inja::Arguments &args)
+    {
+        const auto &value = *args.at(0);
+        const std::string text = value.is_string() ? value.get<std::string>() : value.dump();
+        std::string escaped;
+        escaped.reserve(text.size());
+
+        for (const char character : text) {
+            switch (character) {
+            case '&': escaped += "&amp;"; break;
+            case '<': escaped += "&lt;"; break;
+            case '>': escaped += "&gt;"; break;
+            case '"': escaped += "&quot;"; break;
+            case '\'': escaped += "&#39;"; break;
+            default: escaped += character; break;
+            }
+        }
+
+        return escaped;
+    });
+
     // Convert the values in an object into an array that we can loop over (used for generating rows)
     // Order the values using the _columnOrder data given in the second argument
     env.add_callback("objectToArray", 2, [](inja::Arguments &args)
@@ -324,13 +398,58 @@ int main(int argc, char *argv[])
         return ordered;
     });
 
+    // Escape a string for safe embedding in a JavaScript single-quoted string literal.
+    // Prevents XSS by escaping backslash, single quote, </script> breakout sequences,
+    // and control characters.
+    env.add_callback("jsEscape", 1, [](inja::Arguments &args)
+    {
+        std::string input = args.at(0)->get<std::string>();
+        std::string escaped;
+        escaped.reserve(input.size() + input.size() / 4);
+
+        for (char c : input) {
+            switch (c) {
+                case '\\': escaped += "\\\\"; break;
+                case '\'': escaped += "\\'"; break;
+                case '"':  escaped += "\\\""; break;
+                case '<':  escaped += "\\x3c"; break;
+                case '>':  escaped += "\\x3e"; break;
+                case '/':  escaped += "\\/"; break;
+                case '\n': escaped += "\\n"; break;
+                case '\r': escaped += "\\r"; break;
+                case '\0': escaped += "\\0"; break;
+                default:
+                    if (static_cast<unsigned char>(c) < 0x20) {
+                        char buf[8];
+                        snprintf(buf, sizeof(buf), "\\x%02x", static_cast<unsigned char>(c));
+                        escaped += buf;
+                    } else {
+                        escaped += c;
+                    }
+                    break;
+            }
+        }
+
+        return escaped;
+    });
+
     // Write the JSON first - this is safer and is the report automation need, so if we crash
     // after this point we'll still get some data
     if (gJson) {
         std::filesystem::path jsonFilepath = gOutputDirectory / "report.json";
-        std::ofstream outputJson(jsonFilepath, std::ios::trunc | std::ios::binary);
-        outputJson << reportGenerator->getJson().dump(4);
 
+	int jsonFd = safeOpenForWrite(jsonFilepath);
+        if (jsonFd < 0) {
+            LOG_ERROR("Failed to safely open %s for writing", jsonFilepath.string().c_str());
+            return EXIT_FAILURE;
+        }
+        std::string jsonData = reportGenerator->getJson().dump(4);
+        if (!writeToFd(jsonFd, jsonData)) {
+            LOG_ERROR("Failed to write JSON data to %s", jsonFilepath.string().c_str());
+            close(jsonFd);
+            return EXIT_FAILURE;
+        }
+        close(jsonFd);
         LOG_INFO("Saved JSON data to %s", jsonFilepath.string().c_str());
     }
 
@@ -339,9 +458,17 @@ int main(int argc, char *argv[])
         std::string result = env.render(htmlTemplateString, reportGenerator->getJson());
 
         std::filesystem::path htmlFilepath = gOutputDirectory / "report.html";
-        std::ofstream outputHtml(htmlFilepath, std::ios::trunc | std::ios::binary);
-        outputHtml << result;
-
+        int htmlFd = safeOpenForWrite(htmlFilepath);
+        if (htmlFd < 0) {
+            LOG_ERROR("Failed to safely open %s for writing", htmlFilepath.string().c_str());
+            return EXIT_FAILURE;
+        }
+        if (!writeToFd(htmlFd, result)) {
+            LOG_ERROR("Failed to write HTML report to %s", htmlFilepath.string().c_str());
+            close(htmlFd);
+            return EXIT_FAILURE;
+        }
+        close(htmlFd);
         LOG_INFO("Saved report to %s", htmlFilepath.string().c_str());
     } catch (const std::exception &e) {
         LOG_ERROR("Failed to save HTML report with exception %s", e.what());
