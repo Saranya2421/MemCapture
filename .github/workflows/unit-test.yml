@@ -1,0 +1,52 @@
+name: Unit Tests
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/*.c'
+      - '**/*.cpp'
+      - '**/*.cc'
+      - '**/*.cxx'
+      - '**/*.h'
+      - '**/*.hpp'
+      - '**/*.sh'
+      - 'CMakeLists.txt'
+      - 'vcpkg.json'
+      - 'test/**'
+      - '.github/workflows/**'
+
+jobs:
+  memcapture-unit-tests:
+    name: Build and run MemCapture unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential pkg-config
+
+      - name: Install vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          "$RUNNER_TEMP/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+
+      - name: Configure tests
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake"
+
+      - name: Build tests
+        run: cmake --build build --parallel "$(nproc)"
+
+      - name: Run test cases
+        run: sh test/run_ut.sh
