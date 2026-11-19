@@ -538,7 +538,7 @@ void MemoryMetric::recordGpuMeasurement(pid_t pid, long double memoryUsedKb)
         return;
     }
 
-    if (mGpuMeasurements.size() >= maxGpuMeasurements) {
+    if (mGpuMeasurements.size() + mGpuCompletedProcesses.size() >= maxGpuMeasurements) {
         if (!mGpuMeasurementLimitWarningLogged) {
             LOG_WARN("GPU process measurement limit reached; additional processes will be omitted");
             mGpuMeasurementLimitWarningLogged = true;
