@@ -25,6 +25,7 @@
 #include <thread>
 #include <condition_variable>
 #include <map>
+#include <vector>
 #include <mutex>
 #include "Platform.h"
 #include "GroupManager.h"
@@ -131,6 +132,7 @@ private:
     std::map<std::string, cmaMeasurement> mCmaMeasurements;
     std::map<std::string, Measurement> mLinuxMemoryMeasurements;
     std::map<pid_t, gpuMeasurement> mGpuMeasurements;
+    std::vector<gpuMeasurement> mGpuCompletedProcesses;
     static constexpr size_t maxGpuMeasurements = 256;
     static constexpr std::string::size_type maxGpuProcessStringLength = 4096;
     bool mGpuMeasurementLimitWarningLogged = false;

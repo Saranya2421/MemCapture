@@ -14,9 +14,8 @@ on:
       - '**/*.h'
       - '**/*.hpp'
       - '**/*.sh'
-      - 'CMakeLists.txt'
       - 'vcpkg.json'
-      - 'test/**'
+      - 'tests/**'
       - '.github/workflows/**'
 
 jobs:
@@ -42,11 +41,11 @@ jobs:
         run: |
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_TESTING=ON \
+            -DBUILD_TESTS=ON \
             -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build tests
         run: cmake --build build --parallel "$(nproc)"
 
       - name: Run test cases
-        run: sh test/run_ut.sh
+        run: sh tests/run_ut.sh

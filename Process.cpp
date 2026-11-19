@@ -220,6 +220,11 @@ std::string Process::getName(std::string::size_type maxLength) const
         name.push_back(character);
     }
 
+    // Ensure string ends at UTF-8 character boundary
+    if (maxLength != std::string::npos) {
+        resizeToUtf8Boundary(name, maxLength);
+    }
+
     return name;
 }
 
@@ -247,6 +252,8 @@ std::string Process::getCmdline(std::string::size_type maxLength) const
         cmdline.resize(maxLength);
         cmdFile.read(cmdline.data(), static_cast<std::streamsize>(cmdline.size()));
         cmdline.resize(static_cast<std::string::size_type>(cmdFile.gcount()));
+	// Ensure string ends at UTF-8 character boundary
+        resizeToUtf8Boundary(cmdline, maxLength);
     }
 
     if (cmdline.empty()) {
@@ -362,8 +369,8 @@ std::string Process::GetCgroupPathByCgroupControllerAndPid(const std::string &cg
         std::string cgrp_line;
 
         while (std::getline(cgrp_strm, cgrp_line)) {
-            auto pos = cgrp_line.find(needle);
-	    if (pos != std::string::npos) {
+            const auto pos = cgrp_line.find(':');
+	    if (pos != std::string::npos && cgrp_line.compare(pos, needle.size(), needle) == 0) {
                 // Extract everything after ":<controller>:/"
                 size_t pathStart = pos + needle.size();
                 if (pathStart < cgrp_line.size()) {

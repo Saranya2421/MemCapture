@@ -77,6 +77,27 @@ private:
 
     std::string GetCgroupPathByCgroupControllerAndPid(const std::string &cgroup_controller, pid_t pid);
 
+    // UTF-8 boundary-aware string truncation helpers
+    static bool isUtf8CharacterStart(unsigned char byte)
+    {
+        // UTF-8: single-byte (0xxxxxxx) or multi-byte start (11xxxxxx)
+        // NOT continuation byte (10xxxxxx)
+        return (byte & 0xC0) != 0x80;
+    }
+
+    static void resizeToUtf8Boundary(std::string &str, std::string::size_type maxLength)
+    {
+        if (str.empty() || maxLength >= str.size()) {
+            return;
+        }
+        // Find last character boundary at or before maxLength
+        std::string::size_type pos = maxLength;
+        while (pos > 0 && !isUtf8CharacterStart(static_cast<unsigned char>(str[pos]))) {
+            --pos;
+        }
+        str.resize(pos);
+    }
+
 private:
     pid_t mPid;
     pid_t mPpid;

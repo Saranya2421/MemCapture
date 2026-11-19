@@ -250,6 +250,7 @@ void MemoryMetric::SaveResults()
 
     // *** GPU Memory Usage ***
     if (mGPUMemorySupported) {
+        // Add active GPU processes
         for (const auto &result: mGpuMeasurements) {
             data.emplace_back(JsonReportGenerator::dataItems{
                     std::make_pair("PID", std::to_string(result.first)),
@@ -261,6 +262,20 @@ void MemoryMetric::SaveResults()
                     result.second.Used
             });
         }
+
+        // Add completed GPU processes (those that exited during capture)
+        for (const auto &result: mGpuCompletedProcesses) {
+            data.emplace_back(JsonReportGenerator::dataItems{
+                    std::make_pair("PID", std::to_string(result.ProcessInfo.pid())),
+                    std::make_pair("Process", result.ProcessInfo.name()),
+                    std::make_pair("Container", result.ProcessInfo.container().has_value()
+                                                ? result.ProcessInfo.container().value()
+                                                : "-"),
+                    std::make_pair("Cmdline", result.ProcessInfo.cmdline()),
+                    result.Used
+            });
+        }
+
         mReportGenerator->addDataset("GPU Memory", data);
 
         // Add all GPU memory to accumulated total
@@ -268,6 +283,10 @@ void MemoryMetric::SaveResults()
         std::for_each(mGpuMeasurements.begin(), mGpuMeasurements.end(), [&](const std::pair<pid_t, gpuMeasurement> &m)
         {
             gpuSum += m.second.Used.GetAverage();
+        });
+        std::for_each(mGpuCompletedProcesses.begin(), mGpuCompletedProcesses.end(), [&](const gpuMeasurement &m)
+        {
+            gpuSum += m.Used.GetAverage();
         });
         mReportGenerator->addToAccumulatedMemoryUsage(gpuSum);
 
@@ -471,6 +490,8 @@ void MemoryMetric::GetGpuMemoryUsage()
         for (auto measurement = mGpuMeasurements.begin(); measurement != mGpuMeasurements.end();) {
             measurement->second.ProcessInfo.updateAliveStatus();
             if (measurement->first <= 0 || measurement->second.ProcessInfo.isDead()) {
+                // Preserve completed process summary before erasing from active map
+                mGpuCompletedProcesses.emplace_back(std::move(measurement->second));
                 measurement = mGpuMeasurements.erase(measurement);
             } else {
                 ++measurement;

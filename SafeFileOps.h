@@ -54,6 +54,11 @@ inline bool validateOutputDirectory(const std::filesystem::path &dir)
     }
 
     std::string canonStr = canonical.string();
+    if (canonStr.empty()) {
+         LOG_ERROR("Output directory must not be empty");
+         return false;
+    }
+
     if (canonStr.back() != '/') {
         canonStr += '/';
     }
@@ -103,8 +108,8 @@ inline bool createOutputDirectorySafe(const std::filesystem::path &dir)
         return false;
     }
 
-    if (st.st_uid != 0) {
-        LOG_ERROR("Output directory %s is not owned by root (uid=%d)", dir.string().c_str(), st.st_uid);
+    if (st.st_uid != geteuid()) {
+        LOG_ERROR("Output directory %s is not owned by the effective user (uid=%u)", dir.string().c_str(), static_cast<unsigned int>(st.st_uid));
         return false;
     }
 
@@ -120,32 +125,104 @@ inline bool createOutputDirectorySafe(const std::filesystem::path &dir)
 }
 
 /**
- * @brief Open a file safely with O_NOFOLLOW to prevent symlink-following.
+ * * @brief Open the output directory safely and return a file descriptor for it.
+ * Uses O_DIRECTORY and O_NOFOLLOW to prevent symlink attacks.
  * Returns a valid file descriptor on success, or -1 on failure.
  * Caller is responsible for closing the fd.
  */
-inline int safeOpenForWrite(const std::filesystem::path &filepath)
+inline int openOutputDirectoryDescriptor(const std::filesystem::path &dir)
 {
-    // Open with O_CREAT|O_WRONLY|O_TRUNC|O_NOFOLLOW to prevent symlink attacks
-    int fd = open(filepath.string().c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
+    // Open the directory with O_DIRECTORY to ensure it's a directory and O_NOFOLLOW to prevent symlinks
+    int dirFd = open(dir.string().c_str(), O_DIRECTORY | O_NOFOLLOW | O_RDONLY);
+    if (dirFd < 0) {
+        LOG_ERROR("Failed to open directory descriptor for %s: %s", dir.string().c_str(), strerror(errno));
+        return -1;
+    }
+
+    // Verify it's actually a directory
+    struct stat st{};
+    if (fstat(dirFd, &st) != 0) {
+        LOG_ERROR("fstat failed for directory %s", dir.string().c_str());
+        close(dirFd);
+        return -1;
+    }
+
+    if (!S_ISDIR(st.st_mode)) {
+        LOG_ERROR("Path %s is not a directory", dir.string().c_str());
+        close(dirFd);
+        return -1;
+    }
+
+    return dirFd;
+}
+
+/**
+ * @brief Open a file for writing relative to a directory descriptor (via openat).
+ * This prevents TOCTOU race conditions where the directory could be replaced with a symlink.
+ * Returns a valid file descriptor on success, or -1 on failure.
+ * Caller is responsible for closing the fd.
+ */
+inline int safeOpenForWriteAt(int dirFd, const std::string &filename)
+{
+    if (dirFd < 0) {
+        LOG_ERROR("Invalid directory descriptor");
+        return -1;
+    }
+
+    // Reject any path containing directory separators to prevent traversal
+    if (filename.find('/') != std::string::npos) {
+        LOG_ERROR("Filename %s contains directory separators", filename.c_str());
+        return -1;
+    }
+
+    // Open relative to dirFd with O_CREAT|O_WRONLY|O_TRUNC|O_NOFOLLOW to prevent symlink attacks
+    int fd = openat(dirFd, filename.c_str(), O_CREAT | O_WRONLY | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
     if (fd < 0) {
-        LOG_ERROR("Failed to safely open %s: %s", filepath.string().c_str(), strerror(errno));
+        LOG_ERROR("Failed to safely open %s: %s", filename.c_str(), strerror(errno));
         return -1;
     }
 
     // Verify after open that the file is a regular file
     struct stat st{};
     if (fstat(fd, &st) != 0) {
-        LOG_ERROR("fstat failed for %s", filepath.string().c_str());
+        LOG_ERROR("fstat failed for %s", filename.c_str());
         close(fd);
         return -1;
     }
 
     if (!S_ISREG(st.st_mode)) {
-        LOG_ERROR("Opened path %s is not a regular file", filepath.string().c_str());
+        LOG_ERROR("Opened path %s is not a regular file", filename.c_str());
         close(fd);
         return -1;
     }
+
+    return fd;
+}
+
+/**
+ * @brief Legacy function for compatibility. Uses openat with directory descriptor.
+ * This is safer than the original implementation as it prevents directory-level TOCTOU attacks.
+ */
+inline int safeOpenForWrite(const std::filesystem::path &filepath)
+{
+    // For compatibility, still support the full path version by opening parent directory
+    std::filesystem::path parentDir = filepath.parent_path();
+    std::string filename = filepath.filename().string();
+
+    if (parentDir.empty()) {
+        LOG_ERROR("Invalid file path: no parent directory");
+        return -1;
+    }
+
+    // Open directory descriptor
+    int dirFd = openOutputDirectoryDescriptor(parentDir);
+    if (dirFd < 0) {
+        return -1;
+    }
+
+    // Open file relative to directory descriptor
+    int fd = safeOpenForWriteAt(dirFd, filename);
+    close(dirFd);  // Close the directory descriptor; file descriptor stays open
 
     return fd;
 }
