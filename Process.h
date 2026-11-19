@@ -87,15 +87,25 @@ private:
 
     static void resizeToUtf8Boundary(std::string &str, std::string::size_type maxLength)
     {
-        if (str.empty() || maxLength >= str.size()) {
+        if (str.size() > maxLength) {
+            str.resize(maxLength);
+        }
+        if (str.empty()) {
             return;
         }
-        // Find last character boundary at or before maxLength
-        std::string::size_type pos = maxLength;
+        auto pos = str.size() - 1;
         while (pos > 0 && !isUtf8CharacterStart(static_cast<unsigned char>(str[pos]))) {
             --pos;
         }
-        str.resize(pos);
+        const auto lead = static_cast<unsigned char>(str[pos]);
+        const std::string::size_type expectedLength =
+            lead < 0x80 ? 1 :
+            (lead & 0xE0) == 0xC0 ? 2 :
+            (lead & 0xF0) == 0xE0 ? 3 :
+            (lead & 0xF8) == 0xF0 ? 4 : 1;
+        if (str.size() - pos < expectedLength) {
+            str.resize(pos);
+        }
     }
 
 private:
