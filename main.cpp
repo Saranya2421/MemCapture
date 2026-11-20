@@ -275,8 +275,9 @@ int main(int argc, char *argv[])
         try {
             auto groupsJson = readGroupsFile(gGroupsFile);
             groupManager = std::make_shared<GroupManager>(groupsJson);
-        } catch (const std::exception &) {
-            LOG_ERROR("Failed to load groups file; verify its path, permissions, JSON, and group patterns");
+        } catch (const std::exception &e) {
+            LOG_ERROR("Failed to load groups file: %s", e.what());
+            LOG_ERROR("Verify: path, permissions, JSON structure, and regex pattern syntax");
             return EXIT_FAILURE;
         }
     }
