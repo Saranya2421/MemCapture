@@ -82,14 +82,52 @@ private:
     int fd_;
 };
 
+static const char *const kAllowedGroupsPaths[] = {
+    "/etc/groups.json",
+    "/tmp/memcapture/etc/groups.json",
+    "/media/apps/memcapture/etc/groups.json",
+};
+
+static bool isAllowedGroupsPath(const std::filesystem::path &path)
+{
+    const auto normalized = path.lexically_normal();
+    for (const auto *allowed : kAllowedGroupsPaths) {
+        if (normalized == std::filesystem::path(allowed)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Every parent directory must be a real, root-owned directory that others cannot
+// modify (sticky shared dirs such as /tmp are OK), so an unprivileged user cannot
+// pre-create /tmp/memcapture and plant their own groups file.
+static bool hasTrustedParentChain(const std::filesystem::path &path)
+{
+    std::filesystem::path current;
+    for (const auto &component : path.lexically_normal().parent_path()) {
+        current /= component;
+        struct stat dirInfo {};
+        if (lstat(current.c_str(), &dirInfo) != 0 || !S_ISDIR(dirInfo.st_mode) ||
+            dirInfo.st_uid != 0 ||
+            ((dirInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0 && (dirInfo.st_mode & S_ISVTX) == 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static nlohmann::json readGroupsFile(const std::filesystem::path &path)
 {
     constexpr size_t maxGroupsFileSize = 1024 * 1024;
     const bool runningAsRoot = geteuid() == 0;
-    if (runningAsRoot && path.lexically_normal() != std::filesystem::path("/etc/groups.json")) {
+    if (runningAsRoot && !isAllowedGroupsPath(path)) {
         throw std::runtime_error("groups file path is not allowed for privileged execution");
     }
 
+    if (runningAsRoot && !hasTrustedParentChain(path)) {
+        throw std::runtime_error("groups file directory is not trusted for privileged execution");
+    }
     const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (fd < 0) {
         throw std::runtime_error("unable to open groups file");
