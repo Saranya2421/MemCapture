@@ -48,8 +48,9 @@ std::vector<std::shared_ptr<const re2::RE2>> compilePatterns(const nlohmann::jso
 
         auto compiledPattern = std::make_shared<re2::RE2>(pattern);
         if (!compiledPattern->ok()) {
-            LOG_ERROR("Failed to compile regex pattern '%s': %s", pattern.c_str(), compiledPattern->error().c_str());
-            throw std::invalid_argument(std::string("invalid regex pattern: ") + pattern);
+            LOG_WARN("Skipping unsupported regex pattern '%s': %s", pattern.c_str(), compiledPattern->error().c_str());
+            ++totalPatternCount;
+            continue;
         }
         compiledPatterns.emplace_back(std::move(compiledPattern));
         ++totalPatternCount;
