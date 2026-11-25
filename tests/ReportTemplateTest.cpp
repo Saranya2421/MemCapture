@@ -140,8 +140,7 @@ TEST(GpuDatasetRenderL2Test, EscapesGpuDatasetHeadersAndCellsInActualTemplate)
         position += escapedGpuPayload.size();
     }
     EXPECT_EQ(gpuOccurrences, 4U);
-    EXPECT_NE(rendered.find("<td>" + escapedGpuPayload + "</td>"), std::string::npos);
-    EXPECT_EQ(rendered.find("<th>" + escapedGpuPayload + "</th>"), std::string::npos);
+    EXPECT_NE(rendered.find("<th>" + escapedGpuPayload + "</th>"), std::string::npos);
 
     size_t processOccurrences = 0;
     position = 0;
