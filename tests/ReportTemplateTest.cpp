@@ -13,15 +13,6 @@ namespace {
 
 constexpr const char *templatePath = "templates/template.html";
 
-nlohmann::json loadFixture(const std::string &path)
-{
-    std::ifstream fixtureFile(path);
-    if (!fixtureFile) {
-        throw std::runtime_error("Unable to open test fixture: " + path);
-    }
-    return nlohmann::json::parse(fixtureFile);
-}
-
 nlohmann::json makeProcess(const std::string &payload)
 {
     return {
@@ -92,6 +83,7 @@ std::string renderReport(const nlohmann::json &report)
     env.set_trim_blocks(true);
     env.set_lstrip_blocks(true);
     registerHtmlEscapeCallback(env);
+    registerJsEscapeCallback(env);
     env.add_callback("objectToArray", 2, [](inja::Arguments &args)
     {
         const auto &row = *args.at(0);
@@ -110,8 +102,7 @@ std::string renderReport(const nlohmann::json &report)
 
 TEST(HtmlEscapeL1Test, EscapesHtmlMetacharactersAndPreservesOrdinaryText)
 {
-    const auto fixture = loadFixture("test/1-html-escape-metacharacters/input.json");
-    EXPECT_EQ(htmlEscape(fixture.at("input")), fixture.at("expected").get<std::string>());
+    EXPECT_EQ(htmlEscape(nlohmann::json("&<>\"'")), "&amp;&lt;&gt;&quot;&#39;");
     EXPECT_EQ(htmlEscape(nlohmann::json("GPU client_1-2")), "GPU client_1-2");
 }
 
@@ -122,16 +113,15 @@ TEST(HtmlEscapeL1Test, SerializesNonStringJsonBeforeEscaping)
 
 TEST(GpuDatasetRenderL2Test, EscapesGpuDatasetHeadersAndCellsInActualTemplate)
 {
-    const auto fixture = loadFixture("test/2-gpu-dataset-html-render/input.json");
-    const std::string gpuPayload = fixture.at("payload").get<std::string>();
-    const std::string processPayload = fixture.at("processPayload").get<std::string>();
-    const std::string escapedGpuPayload = fixture.at("expectedCell").get<std::string>();
-    const std::string escapedProcessPayload = fixture.at("expectedProcessCell").get<std::string>();
-    const std::string header = fixture.at("header").get<std::string>();
+    const std::string gpuPayload = "<gpu-client data='\"&'>";
+    const std::string processPayload = "<process data='\"&'>";
+    const std::string escapedGpuPayload = "&lt;gpu-client data=&#39;&quot;&amp;&#39;&gt;";
+    const std::string escapedProcessPayload = "&lt;process data=&#39;&quot;&amp;&#39;&gt;";
+    const std::string header = "GPU <Memory> & \"Usage\"";
 
     const std::string rendered = renderReport(makeReport(header, gpuPayload, processPayload));
 
-    EXPECT_NE(rendered.find(fixture.at("expectedHeader").get<std::string>()), std::string::npos);
+    EXPECT_NE(rendered.find("GPU &lt;Memory&gt; &amp; &quot;Usage&quot;"), std::string::npos);
     EXPECT_EQ(rendered.find(header), std::string::npos);
     EXPECT_EQ(rendered.find(gpuPayload), std::string::npos);
 
@@ -149,7 +139,7 @@ TEST(GpuDatasetRenderL2Test, EscapesGpuDatasetHeadersAndCellsInActualTemplate)
         ++gpuOccurrences;
         position += escapedGpuPayload.size();
     }
-    EXPECT_EQ(gpuOccurrences, fixture.at("expectedCellOccurrences").get<size_t>());
+    EXPECT_EQ(gpuOccurrences, 4U);
     EXPECT_NE(rendered.find("<td>" + escapedGpuPayload + "</td>"), std::string::npos);
     EXPECT_EQ(rendered.find("<th>" + escapedGpuPayload + "</th>"), std::string::npos);
 
@@ -159,6 +149,6 @@ TEST(GpuDatasetRenderL2Test, EscapesGpuDatasetHeadersAndCellsInActualTemplate)
         ++processOccurrences;
         position += escapedProcessPayload.size();
     }
-    EXPECT_EQ(processOccurrences, fixture.at("expectedProcessCellOccurrences").get<size_t>());
+    EXPECT_EQ(processOccurrences, 5U);
 }
 

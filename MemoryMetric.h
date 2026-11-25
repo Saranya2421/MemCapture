@@ -48,6 +48,8 @@ public:
     void SaveResults() override;
 
 private:
+    friend class MemoryMetricTestAccess;
+
     void CollectData(std::chrono::seconds frequency);
 
     void GetLinuxMemoryUsage();
@@ -55,6 +57,8 @@ private:
     void GetCmaMemoryUsage();
 
     void GetGpuMemoryUsage();
+
+    void pruneGpuMeasurements();
 
     void GetContainerMemoryUsage();
 

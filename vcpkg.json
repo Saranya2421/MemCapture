@@ -7,10 +7,13 @@
     {
       "name": "inja",
       "version>=": "3.4.0"
-    },
-    {
-      "name": "re2"
     }
   ],
+  "features": {
+    "tests": {
+      "description": "Build MemCapture unit tests",
+      "dependencies": ["gtest"]
+    }
+  },
   "builtin-baseline": "b73601a4616c21923cfb6f3a5263a9788165efbd"
 }

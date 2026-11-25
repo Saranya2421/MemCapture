@@ -484,19 +484,24 @@ void MemoryMetric::GetCmaMemoryUsage()
     }
 }
 
+void MemoryMetric::pruneGpuMeasurements()
+{
+    for (auto measurement = mGpuMeasurements.begin(); measurement != mGpuMeasurements.end();) {
+        measurement->second.ProcessInfo.updateAliveStatus();
+        if (measurement->first <= 0 || measurement->second.ProcessInfo.isDead()) {
+            // Preserve completed process summary before erasing from active map
+            mGpuCompletedProcesses.emplace_back(std::move(measurement->second));
+            measurement = mGpuMeasurements.erase(measurement);
+        } else {
+            ++measurement;
+        }
+    }
+}
+
 void MemoryMetric::GetGpuMemoryUsage()
 {
     if (mGPUMemorySupported) {
-        for (auto measurement = mGpuMeasurements.begin(); measurement != mGpuMeasurements.end();) {
-            measurement->second.ProcessInfo.updateAliveStatus();
-            if (measurement->first <= 0 || measurement->second.ProcessInfo.isDead()) {
-                // Preserve completed process summary before erasing from active map
-                mGpuCompletedProcesses.emplace_back(std::move(measurement->second));
-                measurement = mGpuMeasurements.erase(measurement);
-            } else {
-                ++measurement;
-            }
-        }
+        pruneGpuMeasurements();
 
         //LOG_INFO("Getting GPU memory usage");
 

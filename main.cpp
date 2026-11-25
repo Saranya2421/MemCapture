@@ -31,6 +31,8 @@
 #include "Platform.h"
 #include "Log.h"
 #include "SafeFileOps.h"
+#include "GroupsFile.h"
+#include "HtmlEscape.h"
 #include "ProcessMetric.h"
 #include "MemoryMetric.h"
 #include "Metadata.h"
@@ -67,98 +69,6 @@ static bool gCpuIdle = false;
 
 bool gEnableGroups = false;
 static std::filesystem::path gGroupsFile;
-
-class ScopedFileDescriptor
-{
-public:
-    explicit ScopedFileDescriptor(const int fd) : fd_(fd) {}
-    ~ScopedFileDescriptor() { if (fd_ >= 0) close(fd_); }
-    int get() const { return fd_; }
-
-    ScopedFileDescriptor(const ScopedFileDescriptor &) = delete;
-    ScopedFileDescriptor &operator=(const ScopedFileDescriptor &) = delete;
-
-private:
-    int fd_;
-};
-
-static const char *const kAllowedGroupsPaths[] = {
-    "/etc/groups.json",
-    "/tmp/memcapture/etc/groups.json",
-    "/media/apps/memcapture/etc/groups.json",
-};
-
-static bool isAllowedGroupsPath(const std::filesystem::path &path)
-{
-    const auto normalized = path.lexically_normal();
-    for (const auto *allowed : kAllowedGroupsPaths) {
-        if (normalized == std::filesystem::path(allowed)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// Every parent directory must be a real, root-owned directory that others cannot
-// modify (sticky shared dirs such as /tmp are OK), so an unprivileged user cannot
-// pre-create /tmp/memcapture and plant their own groups file.
-static bool hasTrustedParentChain(const std::filesystem::path &path)
-{
-    std::filesystem::path current;
-    for (const auto &component : path.lexically_normal().parent_path()) {
-        current /= component;
-        struct stat dirInfo {};
-        if (lstat(current.c_str(), &dirInfo) != 0 || !S_ISDIR(dirInfo.st_mode) ||
-            dirInfo.st_uid != 0 ||
-            ((dirInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0 && (dirInfo.st_mode & S_ISVTX) == 0)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static nlohmann::json readGroupsFile(const std::filesystem::path &path)
-{
-    constexpr size_t maxGroupsFileSize = 1024 * 1024;
-    const bool runningAsRoot = geteuid() == 0;
-    if (runningAsRoot && !isAllowedGroupsPath(path)) {
-        throw std::runtime_error("groups file path is not allowed for privileged execution");
-    }
-
-    if (runningAsRoot && !hasTrustedParentChain(path)) {
-        throw std::runtime_error("groups file directory is not trusted for privileged execution");
-    }
-    const int fd = open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-    if (fd < 0) {
-        throw std::runtime_error("unable to open groups file");
-    }
-    const ScopedFileDescriptor file(fd);
-
-    struct stat fileInfo {};
-    if (fstat(file.get(), &fileInfo) != 0 || !S_ISREG(fileInfo.st_mode) ||
-        (runningAsRoot && (fileInfo.st_uid != 0 || (fileInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0))) {
-        throw std::runtime_error("groups file is not a trusted regular file");
-    }
-
-    std::string contents;
-    char buffer[4096];
-    while (true) {
-        const ssize_t bytesRead = read(file.get(), buffer, sizeof(buffer));
-        if (bytesRead < 0) {
-            throw std::runtime_error("unable to read groups file");
-        }
-        if (bytesRead == 0) {
-            break;
-        }
-        const size_t count = static_cast<size_t>(bytesRead);
-        if (count > maxGroupsFileSize - contents.size()) {
-            throw std::runtime_error("groups file exceeds size limit");
-        }
-        contents.append(buffer, count);
-    }
-
-    return nlohmann::json::parse(contents);
-}
 
 ConditionVariable gStop;
 std::mutex gLock;
@@ -311,7 +221,7 @@ int main(int argc, char *argv[])
     std::optional<std::shared_ptr<GroupManager>> groupManager = std::nullopt;
     if (gEnableGroups) {
         try {
-            auto groupsJson = readGroupsFile(gGroupsFile);
+            auto groupsJson = groups_file::read(gGroupsFile, geteuid() == 0);
             groupManager = std::make_shared<GroupManager>(groupsJson);
         } catch (const std::exception &e) {
             LOG_ERROR("Failed to load groups file: %s", e.what());
@@ -380,27 +290,8 @@ int main(int argc, char *argv[])
     env.set_trim_blocks(true);
     env.set_lstrip_blocks(true);
 
-    env.add_callback("htmlEscape", 1, [](inja::Arguments &args)
-    {
-        const auto &value = *args.at(0);
-        const std::string text = value.is_string() ? value.get<std::string>() : value.dump();
-        std::string escaped;
-        escaped.reserve(text.size());
-
-        for (const char character : text) {
-            switch (character) {
-            case '&': escaped += "&amp;"; break;
-            case '<': escaped += "&lt;"; break;
-            case '>': escaped += "&gt;"; break;
-            case '"': escaped += "&quot;"; break;
-            case '\'': escaped += "&#39;"; break;
-            default: escaped += character; break;
-            }
-        }
-
-        return escaped;
-    });
-
+    registerHtmlEscapeCallback(env);
+ 
     // Convert the values in an object into an array that we can loop over (used for generating rows)
     // Order the values using the _columnOrder data given in the second argument
     env.add_callback("objectToArray", 2, [](inja::Arguments &args)
@@ -437,40 +328,7 @@ int main(int argc, char *argv[])
         return ordered;
     });
 
-    // Escape a string for safe embedding in a JavaScript single-quoted string literal.
-    // Prevents XSS by escaping backslash, single quote, </script> breakout sequences,
-    // and control characters.
-    env.add_callback("jsEscape", 1, [](inja::Arguments &args)
-    {
-        std::string input = args.at(0)->get<std::string>();
-        std::string escaped;
-        escaped.reserve(input.size() + input.size() / 4);
-
-        for (char c : input) {
-            switch (c) {
-                case '\\': escaped += "\\\\"; break;
-                case '\'': escaped += "\\'"; break;
-                case '"':  escaped += "\\\""; break;
-                case '<':  escaped += "\\x3c"; break;
-                case '>':  escaped += "\\x3e"; break;
-                case '/':  escaped += "\\/"; break;
-                case '\n': escaped += "\\n"; break;
-                case '\r': escaped += "\\r"; break;
-                case '\0': escaped += "\\0"; break;
-                default:
-                    if (static_cast<unsigned char>(c) < 0x20) {
-                        char buf[8];
-                        snprintf(buf, sizeof(buf), "\\x%02x", static_cast<unsigned char>(c));
-                        escaped += buf;
-                    } else {
-                        escaped += c;
-                    }
-                    break;
-            }
-        }
-
-        return escaped;
-    });
+    registerJsEscapeCallback(env);
 
     // Write the JSON first - this is safer and is the report automation need, so if we crash
     // after this point we'll still get some data

@@ -358,31 +358,26 @@ std::string Process::GetCgroupPathByCgroupControllerAndPid(const std::string &cg
     char cgroupFilePath[PATH_MAX];
     snprintf(cgroupFilePath, sizeof(cgroupFilePath), "/proc/%d/cgroup", pid);
 
-    std::string cgrp_path;
-
-    // Match pattern: "<hierarchy_id>:<controller>:/<path>"
-    // e.g. "3:cpuset:/com.sky.as.apps_com.bskyb.epgui"
-    std::string needle = ":" + cgroup_controller + ":/";
-
     std::ifstream cgrp_strm(cgroupFilePath);
     if (cgrp_strm) {
-        std::string cgrp_line;
-
-        while (std::getline(cgrp_strm, cgrp_line)) {
-            const auto pos = cgrp_line.find(':');
-	    if (pos != std::string::npos && cgrp_line.compare(pos, needle.size(), needle) == 0) {
-                // Extract everything after ":<controller>:/"
-                size_t pathStart = pos + needle.size();
-                if (pathStart < cgrp_line.size()) {
-                    cgrp_path = cgrp_line.substr(pathStart);
-                }
-                break;
-            }
-        }
+        return parseCgroupPath(cgrp_strm, cgroup_controller);
     } else {
         // Expected, process might have died in the meantime
         LOG_DEBUG("Could not open process cgroup file '%s'", cgroupFilePath);
     }
 
-    return cgrp_path;
+    return {};
+}
+
+std::string Process::parseCgroupPath(std::istream &stream, const std::string &controller)
+{
+    const std::string needle = ":" + controller + ":/";
+    std::string line;
+    while (std::getline(stream, line)) {
+        const auto pos = line.find(':');
+        if (pos != std::string::npos && line.compare(pos, needle.size(), needle) == 0) {
+            return line.substr(pos + needle.size());
+        }
+    }
+    return {};
 }

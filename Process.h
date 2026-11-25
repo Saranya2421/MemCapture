@@ -24,6 +24,7 @@
 #include "GroupManager.h"
 #include <memory>
 #include <optional>
+#include <istream>
 #include "Measurement.h"
 
 /**
@@ -63,6 +64,10 @@ public:
     void updateAliveStatus();
 
 private:
+    friend class ProcessMetricTestAccess;
+    friend class ProcessTestAccess;
+    friend class MemoryMetricTestAccess;
+
     pid_t getParentPid() const;
 
     std::string getName(std::string::size_type maxLength) const;
@@ -77,6 +82,7 @@ private:
 
     std::string GetCgroupPathByCgroupControllerAndPid(const std::string &cgroup_controller, pid_t pid);
 
+    static std::string parseCgroupPath(std::istream &stream, const std::string &controller);
     // UTF-8 boundary-aware string truncation helpers
     static bool isUtf8CharacterStart(unsigned char byte)
     {

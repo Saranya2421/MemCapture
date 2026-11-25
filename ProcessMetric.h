@@ -44,6 +44,8 @@ public:
 
 
 private:
+    friend class ProcessMetricTestAccess;
+
     void CollectData(std::chrono::seconds frequency);
 
     void DeduplicateData();

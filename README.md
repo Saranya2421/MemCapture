@@ -9,7 +9,6 @@ MemCapture requires the following 3rd party libraries:
 
 * Nlohmann JSON
 * Inja
-* RE2
 
 For desktop builds, these can be installed using vcpkg. 
 
@@ -26,7 +25,7 @@ $ make -j$(nproc)
 ```
 
 #### Yocto
-For Yocto builds, ensure the nlohmann/json, inja, and RE2 libraries are added as recipe dependencies.
+For Yocto builds, ensure the nlohmann/json, and inja libraries are added as recipe dependencies.
 
 ## Run
 
@@ -58,9 +57,8 @@ Averages are calculated over the specified duration.
 
 To ease analysis, MemCapture supports grouping processes into categories. This is done by providing MemCapture with a
 JSON file containing the groups and regexes defining which process(es) should belong to that group.
-Patterns use RE2-compatible syntax. Each pattern is limited to 128 bytes, each group to 64 patterns, and the full
-configuration to 128 patterns. At most 128 groups of each type are accepted. Matching examines at most the first
-4096 bytes of a process or container name.
+Patterns use the default ECMAScript syntax of `std::regex`. Matching uses `std::regex_search`,
+and the first matching group is selected. Invalid regex syntax causes group loading to fail.
 
 For example if the provided JSON file contained the below:
 

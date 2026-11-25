@@ -1,7 +1,5 @@
 #include "GroupManager.h"
 #include <gtest/gtest.h>
-#include <fstream>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -9,11 +7,10 @@ namespace {
 
 nlohmann::json loadFixture()
 {
-    std::ifstream fixture("test/3-group-pattern-validation/input.json");
-    if (!fixture) {
-        throw std::runtime_error("Unable to open group-pattern fixture");
-    }
-    return nlohmann::json::parse(fixture);
+    return {
+        {"processes", {{{"group", "Logging"}, {"processes", {"syslog-ng", "systemd-journald"}}}}},
+        {"containers", {{{"group", "Apps"}, {"containers", {"app-container"}}}}}
+    };
 }
 
 nlohmann::json makeGroups(nlohmann::json processGroups, nlohmann::json containerGroups = nlohmann::json::array())
@@ -42,88 +39,37 @@ TEST(GroupManagerL1Test, MatchesProcessAndContainerPatterns)
     EXPECT_FALSE(manager.getGroup(GroupManager::groupType::PROCESS, "unmatched").has_value());
 }
 
-TEST(GroupManagerL1Test, LimitsRegexMatchingToFirst4096Bytes)
+TEST(GroupManagerL1Test, UsesPartialMatchingAndStandardRegexSyntax)
 {
     GroupManager manager(makeGroups(nlohmann::json::array({
-        makeGroup("Suffix", nlohmann::json::array({"needle"}))
+        makeGroup("Worker", nlohmann::json::array({"worker(?=-)"}))
     })));
 
-    EXPECT_FALSE(manager.getGroup(GroupManager::groupType::PROCESS, std::string(4096, 'x') + "needle").has_value());
-    EXPECT_EQ(manager.getGroup(GroupManager::groupType::PROCESS, std::string(4090, 'x') + "needle"),
-              std::optional<std::string>("Suffix"));
+    EXPECT_EQ(manager.getGroup(GroupManager::groupType::PROCESS, "/usr/bin/worker-service"),
+              std::optional<std::string>("Worker"));
+    EXPECT_FALSE(manager.getGroup(GroupManager::groupType::PROCESS, "worker_service").has_value());
 }
 
-TEST(GroupManagerL1Test, RejectsInvalidAndOversizedPatterns)
+TEST(GroupManagerL1Test, RejectsInvalidRegexAndNonStringPatterns)
 {
     EXPECT_THROW(GroupManager(makeGroups(nlohmann::json::array({
         makeGroup("Invalid", nlohmann::json::array({"("}))
-    }))), std::invalid_argument);
+    }))), std::regex_error);
 
     EXPECT_THROW(GroupManager(makeGroups(nlohmann::json::array({
         makeGroup("Not a string", nlohmann::json::array({42}))
-    }))), std::invalid_argument);
-
-    EXPECT_THROW(GroupManager(makeGroups(nlohmann::json::array({
-        makeGroup("Long", nlohmann::json::array({std::string(129, 'a')}))
-    }))), std::invalid_argument);
+    }))), nlohmann::json::type_error);
 }
 
-TEST(GroupManagerL1Test, RejectsPerGroupTotalPatternAndGroupCountLimits)
+TEST(GroupManagerL1Test, UsesFirstMatchingGroupAndSkipsMalformedEntries)
 {
-    nlohmann::json tooManyPatterns = nlohmann::json::array();
-    for (size_t i = 0; i < 65; ++i) {
-        tooManyPatterns.emplace_back("pattern");
-    }
-    EXPECT_THROW(GroupManager(makeGroups(nlohmann::json::array({
-        makeGroup("Too many", tooManyPatterns)
-    }))), std::invalid_argument);
-
-    nlohmann::json processGroups = nlohmann::json::array({
-        makeGroup("First", nlohmann::json::array()),
-        makeGroup("Second", nlohmann::json::array())
-    });
-    for (size_t i = 0; i < 64; ++i) {
-        processGroups[0]["processes"].emplace_back("first");
-        processGroups[1]["processes"].emplace_back("second");
-    }
-    const nlohmann::json containerGroups = nlohmann::json::array({
-        {{"group", "Third"}, {"containers", nlohmann::json::array({"third"})}}
-    });
-    EXPECT_THROW(GroupManager(makeGroups(processGroups, containerGroups)), std::invalid_argument);
-
-    nlohmann::json tooManyGroups = nlohmann::json::array();
-    for (size_t i = 0; i < 129; ++i) {
-        tooManyGroups.emplace_back(makeGroup("Group", nlohmann::json::array()));
-    }
-    EXPECT_THROW(GroupManager(makeGroups(tooManyGroups)), std::invalid_argument);
-
-    nlohmann::json tooManyContainerGroups = nlohmann::json::array();
-    for (size_t i = 0; i < 129; ++i) {
-        tooManyContainerGroups.emplace_back(
-            nlohmann::json{{"group", "Container"}, {"containers", nlohmann::json::array()}});
-    }
-    EXPECT_THROW(GroupManager(makeGroups(nlohmann::json::array(), tooManyContainerGroups)),
-                 std::invalid_argument);
+    GroupManager manager(makeGroups(nlohmann::json::array({
+        {{"processes", {"worker"}}},
+        {{"group", "Missing patterns"}},
+        makeGroup("First", nlohmann::json::array({"worker"})),
+        makeGroup("Second", nlohmann::json::array({"worker"}))
+    })));
+    EXPECT_EQ(manager.getGroup(GroupManager::groupType::PROCESS, "worker"),
+              std::optional<std::string>("First"));
 }
 
-TEST(GroupManagerL1Test, AcceptsConfiguredPatternAndGroupBoundaries)
-{
-    nlohmann::json processGroups = nlohmann::json::array();
-    for (size_t i = 0; i < 128; ++i) {
-        processGroups.emplace_back(makeGroup("Group", nlohmann::json::array()));
-    }
-
-    nlohmann::json processPatterns = nlohmann::json::array();
-    nlohmann::json containerPatterns = nlohmann::json::array();
-    for (size_t i = 0; i < 64; ++i) {
-        processPatterns.emplace_back("process");
-        containerPatterns.emplace_back("container");
-    }
-    processPatterns[0] = std::string(128, 'a');
-    processGroups[0]["processes"] = std::move(processPatterns);
-    const nlohmann::json containerGroups = nlohmann::json::array({
-        {{"group", "Containers"}, {"containers", containerPatterns}}
-    });
-
-    EXPECT_NO_THROW(GroupManager(makeGroups(processGroups, containerGroups)));
-}

@@ -15,9 +15,11 @@ class GroupsFileTest : public ::testing::Test
 protected:
     void SetUp() override
     {
-        tempDir = std::filesystem::temp_directory_path() /
-                  ("memcapture_groups_test_" + std::to_string(getpid()));
-        std::filesystem::create_directories(tempDir);
+        std::string pattern = (std::filesystem::temp_directory_path() /
+                               "memcapture_groups_test_XXXXXX").string();
+        const char *created = mkdtemp(pattern.data());
+        ASSERT_NE(created, nullptr);
+        tempDir = created;
     }
 
     void TearDown() override
@@ -32,16 +34,24 @@ protected:
 
 TEST_F(GroupsFileTest, AllowsReadableNonRootFixtureAndParsesJson)
 {
-    const auto json = groups_file::read("test/6-groups-file-validation/valid.json", false);
+    const auto path = tempDir / "valid.json";
+    {
+        std::ofstream file(path);
+        file << R"({"processes":[],"containers":[]})";
+    }
+    const auto json = groups_file::read(path, false);
     EXPECT_TRUE(json.at("processes").is_array());
     EXPECT_TRUE(json.at("containers").is_array());
 }
 
 TEST_F(GroupsFileTest, RejectsUnapprovedPathForRootAndValidatesTrustedFileMetadata)
 {
-    const std::filesystem::path path("test/6-groups-file-validation/valid.json");
+    const auto path = tempDir / "valid.json";
     EXPECT_FALSE(groups_file::isAllowedPath(path, true));
     EXPECT_TRUE(groups_file::isAllowedPath("/etc/groups.json", true));
+    EXPECT_TRUE(groups_file::isAllowedPath("/tmp/memcapture/etc/groups.json", true));
+    EXPECT_TRUE(groups_file::isAllowedPath("/media/apps/memcapture/etc/groups.json", true));
+    EXPECT_THROW(groups_file::read(path, true), std::runtime_error);
 
     struct stat fileInfo {};
     fileInfo.st_mode = S_IFREG | 0644;
@@ -84,3 +94,4 @@ TEST_F(GroupsFileTest, RejectsSymlinksDirectoriesInvalidJsonAndOversizedFiles)
     }
     EXPECT_THROW(groups_file::read(oversized, false), std::runtime_error);
 }
+

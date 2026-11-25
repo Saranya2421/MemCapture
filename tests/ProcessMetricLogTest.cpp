@@ -1,7 +1,6 @@
 #include "ProcessMetric.h"
 #include <gtest/gtest.h>
 #include <cstdio>
-#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -34,15 +33,6 @@ public:
 };
 
 namespace {
-
-nlohmann::json loadFixture()
-{
-    std::ifstream fixture("test/7-process-log-redaction/input.json");
-    if (!fixture) {
-        throw std::runtime_error("Unable to open process-log fixture");
-    }
-    return nlohmann::json::parse(fixture);
-}
 
 std::string captureDeduplicationLog(ProcessMetric &metric)
 {
@@ -86,8 +76,7 @@ std::string captureDeduplicationLog(ProcessMetric &metric)
 
 TEST(ProcessMetricLogL1Test, DuplicateRemovalLogDoesNotExposeCommandLine)
 {
-    const auto fixture = loadFixture();
-    const std::string cmdline = fixture.at("cmdlineCanary").get<std::string>();
+    const std::string cmdline = "test-process --private-value=LOG_CANARY";
     ProcessMetric metric(nullptr);
     ProcessMetricTestAccess::addDeadDuplicate(metric, 1000001, cmdline, 10);
     ProcessMetricTestAccess::addDeadDuplicate(metric, 1000002, cmdline, 20);
@@ -95,7 +84,8 @@ TEST(ProcessMetricLogL1Test, DuplicateRemovalLogDoesNotExposeCommandLine)
     const std::string logOutput = captureDeduplicationLog(metric);
 
     EXPECT_EQ(logOutput.find(cmdline), std::string::npos);
-    EXPECT_NE(logOutput.find(fixture.at("expectedSafeLog").get<std::string>()), std::string::npos);
+    EXPECT_NE(logOutput.find("Removing 1 duplicate process records"), std::string::npos);
     EXPECT_EQ(ProcessMetricTestAccess::measurementCount(metric), 1U);
 }
+
 

@@ -27,7 +27,7 @@ fi
 
 if [ ! -x "$TEST_BIN" ]; then
     echo "ERROR: MemCaptureTests not found at $TEST_BIN"
-    echo "Build with -DBUILD_TESTING=ON or set MEMCAPTURE_TEST_BIN."
+    echo "Build with -DBUILD_TESTS=ON or set MEMCAPTURE_TEST_BIN."
     exit 1
 fi
 
@@ -58,6 +58,19 @@ run_test_case()
     echo "$tc_id: $tc_summary"
     echo "------------------------------------------"
 
+    if ! test_list=$("$TEST_BIN" "--gtest_filter=$gtest_filter" --gtest_list_tests); then
+        echo "ERROR: Unable to list tests for $gtest_filter"
+        TEST_FAILED=$((TEST_FAILED + 1))
+        record_tc_result "$tc_id" "$tc_summary" "FAILURE"
+        return
+    fi
+    if ! printf '%s\n' "$test_list" | grep -q '^  [^ ]'; then
+        echo "ERROR: No tests matched $gtest_filter"
+        TEST_FAILED=$((TEST_FAILED + 1))
+        record_tc_result "$tc_id" "$tc_summary" "FAILURE"
+        return
+    fi
+
     if "$TEST_BIN" "--gtest_filter=$gtest_filter"; then
         record_tc_result "$tc_id" "$tc_summary" "SUCCESS"
     else
@@ -85,7 +98,7 @@ echo "Using test binary: $TEST_BIN"
 
 run_test_case "1" "HTML metacharacter escaping" "HtmlEscapeL1Test.*"
 run_test_case "2" "GPU dataset report rendering" "GpuDatasetRenderL2Test.*"
-run_test_case "3" "Group regex validation and limits" "GroupManagerL1Test.*"
+run_test_case "3" "Group matching and regex validation" "GroupManagerL1Test.*"
 run_test_case "4" "Process string length bounds" "ProcessStringLimitL1Test.*"
 run_test_case "5" "GPU measurement capacity and pruning" "GpuMeasurementPolicyL1Test.*"
 run_test_case "6" "Groups-file trust validation" "GroupsFileTest.*"
@@ -100,4 +113,5 @@ if [ "$TEST_FAILED" -ne 0 ]; then
 fi
 
 exit 0
+
 

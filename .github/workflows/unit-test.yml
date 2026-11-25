@@ -15,6 +15,7 @@ on:
       - '**/*.hpp'
       - '**/*.sh'
       - 'vcpkg.json'
+      - '**/CMakeLists.txt'
       - 'tests/**'
       - '.github/workflows/**'
 
@@ -42,6 +43,7 @@ jobs:
           cmake -S . -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_TESTS=ON \
+            -DVCPKG_MANIFEST_FEATURES=tests \
             -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake"
 
       - name: Build tests

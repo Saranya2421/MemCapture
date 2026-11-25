@@ -1,62 +1,81 @@
-#include "GpuMeasurementPolicy.h"
+#include "MemoryMetric.h"
 #include <gtest/gtest.h>
-#include <nlohmann/json.hpp>
-#include <fstream>
-#include <map>
-#include <stdexcept>
+#include <unistd.h>
 
-namespace {
-
-nlohmann::json loadFixture()
+class MemoryMetricTestAccess
 {
-    std::ifstream fixture("test/5-gpu-measurement-capacity/input.json");
-    if (!fixture) {
-        throw std::runtime_error("Unable to open GPU-measurement fixture");
+public:
+    static void record(MemoryMetric &metric, pid_t pid, long double usage)
+    {
+        metric.recordGpuMeasurement(pid, usage);
     }
-    return nlohmann::json::parse(fixture);
-}
 
-struct FakeProcessInfo
-{
-    bool dead;
-    bool updated = false;
+    static size_t activeCount(const MemoryMetric &metric)
+    {
+        return metric.mGpuMeasurements.size();
+    }
 
-    void updateAliveStatus() { updated = true; }
-    bool isDead() const { return dead; }
+    static long double average(const MemoryMetric &metric, pid_t pid)
+    {
+        return metric.mGpuMeasurements.at(pid).Used.GetAverage();
+    }
+
+    static void fillCompleted(MemoryMetric &metric, size_t count)
+    {
+        const Process process(getpid());
+        for (size_t i = 0; i < count; ++i) {
+            metric.mGpuCompletedProcesses.emplace_back(process, Measurement("Memory_Usage_KB"));
+        }
+    }
+
+    static void addDeadRecord(MemoryMetric &metric, pid_t pid)
+    {
+        Process process(getpid());
+        process.mPid = pid;
+        process.mDead = true;
+        metric.mGpuMeasurements.emplace(pid, MemoryMetric::gpuMeasurement(
+            std::move(process), Measurement("Memory_Usage_KB")));
+    }
+
+    static void prune(MemoryMetric &metric)
+    {
+        metric.pruneGpuMeasurements();
+    }
+
+    static size_t completedCount(const MemoryMetric &metric)
+    {
+        return metric.mGpuCompletedProcesses.size();
+    }
 };
-
-struct FakeGpuMeasurement
-{
-    FakeProcessInfo ProcessInfo;
-};
-
-} // namespace
 
 TEST(GpuMeasurementPolicyL1Test, RejectsInvalidAndNewMeasurementsPastTheLimit)
 {
-    const auto fixture = loadFixture();
-    EXPECT_FALSE(gpu_measurement::shouldRecord(fixture.at("zeroPid").get<pid_t>(), false, 0));
-    EXPECT_FALSE(gpu_measurement::shouldRecord(fixture.at("negativePid").get<pid_t>(), false, 0));
-    EXPECT_TRUE(gpu_measurement::shouldRecord(
-        1, false, fixture.at("availableSlots").get<size_t>()));
-    EXPECT_FALSE(gpu_measurement::shouldRecord(
-        1, false, fixture.at("capacity").get<size_t>()));
-    EXPECT_TRUE(gpu_measurement::shouldRecord(
-        1, true, fixture.at("capacity").get<size_t>()));
+    MemoryMetric metric(Platform::BROADCOM, nullptr);
+    MemoryMetricTestAccess::record(metric, 0, 10);
+    MemoryMetricTestAccess::record(metric, -1, 10);
+    EXPECT_EQ(MemoryMetricTestAccess::activeCount(metric), 0U);
+
+    MemoryMetricTestAccess::fillCompleted(metric, 255);
+    MemoryMetricTestAccess::record(metric, getpid(), 10);
+    ASSERT_EQ(MemoryMetricTestAccess::activeCount(metric), 1U);
+
+    MemoryMetricTestAccess::record(metric, getpid() + 1, 10);
+    EXPECT_EQ(MemoryMetricTestAccess::activeCount(metric), 1U);
+    MemoryMetricTestAccess::record(metric, getpid(), 20);
+    EXPECT_EQ(MemoryMetricTestAccess::average(metric, getpid()), 15);
 }
 
-TEST(GpuMeasurementPolicyL1Test, RemovesDeadAndInvalidRecordsButKeepsLiveProcesses)
+TEST(GpuMeasurementPolicyL1Test, PreservesDeadRecordsButKeepsLiveProcessesActive)
 {
-    std::map<pid_t, FakeGpuMeasurement> measurements = {
-        {-1, {{false}}},
-        {1, {{true}}},
-        {2, {{false}}}
-    };
+    MemoryMetric metric(Platform::BROADCOM, nullptr);
+    MemoryMetricTestAccess::record(metric, getpid(), 10);
+    MemoryMetricTestAccess::addDeadRecord(metric, -1);
+    MemoryMetricTestAccess::addDeadRecord(metric, getpid() + 1);
 
-    gpu_measurement::removeDeadProcesses(measurements);
-
-    ASSERT_EQ(measurements.size(), 1U);
-    EXPECT_EQ(measurements.begin()->first, 2);
-    EXPECT_TRUE(measurements.begin()->second.ProcessInfo.updated);
+    MemoryMetricTestAccess::prune(metric);
+    EXPECT_EQ(MemoryMetricTestAccess::activeCount(metric), 1U);
+    EXPECT_EQ(MemoryMetricTestAccess::completedCount(metric), 2U);
+    EXPECT_EQ(MemoryMetricTestAccess::average(metric, getpid()), 10);
 }
+
 
