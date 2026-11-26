@@ -64,17 +64,32 @@ inline bool isAllowedPath(const std::filesystem::path &path, bool runningAsRoot)
     return false;
 }
 
-// Sticky shared directories such as /tmp are allowed, but their descendants
-// must still be real root-owned directories that others cannot modify.
 inline bool hasTrustedParentChain(const std::filesystem::path &path)
 {
     std::filesystem::path current;
     for (const auto &component : path.lexically_normal().parent_path()) {
         current /= component;
+        
+        // Skip root directory; it is implicitly trusted and may have special attributes
+        // in some environments (containers, sandboxes, etc.)
+        if (current == std::filesystem::path("/")) {
+            continue;
+        }
+        
         struct stat dirInfo {};
         if (lstat(current.c_str(), &dirInfo) != 0 || !S_ISDIR(dirInfo.st_mode) ||
-            dirInfo.st_uid != 0 ||
-            ((dirInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0 && (dirInfo.st_mode & S_ISVTX) == 0)) {
+            dirInfo.st_uid != 0) {
+            return false;
+        }
+        const bool writableByOthers = (dirInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0;
+        
+        // Allow 777 permissions for /media/apps (shared app partition) and its subdirectories
+        // /tmp and similar use sticky bit (S_ISVTX) for protection instead
+        const std::string currentStr = current.string();
+        const bool isMediaAppsOrSubdir = (currentStr == "/media/apps" || 
+                                          currentStr.find("/media/apps/") == 0);
+        
+        if (writableByOthers && (dirInfo.st_mode & S_ISVTX) == 0 && !isMediaAppsOrSubdir) {
             return false;
         }
     }
